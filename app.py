@@ -11,6 +11,7 @@ import streamlit as st
 
 from loaders import SUPPORTED_EXTENSIONS, load_dataframe
 from profiler import profile, render
+from rules import TASKS, classify_goal, evaluate_fitness, render_fitness
 
 st.set_page_config(page_title="Dataset Fitness Check", layout="wide")
 
@@ -54,8 +55,51 @@ st.dataframe(df.head(20), use_container_width=True)
 st.subheader("Fitness report")
 st.code(render(profile(df)), language="text")
 
+# --------------------------------------------------------------------------- #
+# Layer 2: goal-aware fitness
+# --------------------------------------------------------------------------- #
+prof = profile(df)
+
+st.subheader("Is it fit for your goal?")
+st.caption("Describe what you want to do, or pick a task. The check adapts to it.")
+
+goal_text = st.text_input(
+    "Your goal (optional)",
+    placeholder="e.g. segment my customers into groups / predict who will churn",
+)
+suggested, matched = classify_goal(goal_text)
+
+task_labels = {spec.label: tid for tid, spec in TASKS.items()}
+default_label = TASKS[suggested].label if suggested else list(task_labels)[0]
+if suggested and matched:
+    st.caption(f"Detected task from your wording (matched \u201c{matched}\u201d): **{TASKS[suggested].label}**. Change it below if that's wrong.")
+
+chosen_label = st.selectbox(
+    "Task", list(task_labels),
+    index=list(task_labels).index(default_label),
+)
+task_id = task_labels[chosen_label]
+st.caption(TASKS[task_id].blurb)
+
+target = None
+if TASKS[task_id].needs_target:
+    target = st.selectbox(
+        "Which column is the target (the thing to predict)?",
+        list(df.columns),
+    )
+
+result = evaluate_fitness(task_id, df, prof, target=target)
+headline, sub = result["verdict"]
+if headline == "Not ready yet":
+    st.error(f"**{headline}** — {sub}")
+elif headline == "Usable with preparation":
+    st.warning(f"**{headline}** — {sub}")
+else:
+    st.success(f"**{headline}** — {sub}")
+
+st.code(render_fitness(result), language="text")
+
 st.caption(
-    "Next versions: tell the tool your goal (segmentation, classification, "
-    "forecasting...) for goal-aware fitness checks, then get tailored "
-    "preprocessing code."
+    "Next version: turn these findings into ready-to-run preprocessing code, "
+    "tailored to your columns."
 )

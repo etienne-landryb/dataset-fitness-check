@@ -148,7 +148,11 @@ def _id_candidates(df: pd.DataFrame):
     out = []
     for c in df.columns:
         name = str(c).lower()
-        all_unique = n > 1 and df[c].nunique(dropna=True) == n
+        # All-unique only implies an identifier for integer or text columns.
+        # A continuous float being all-unique just means it's a measurement
+        # (e.g. usage_hours) -- not an ID. This avoids the false positive.
+        is_float = pd.api.types.is_float_dtype(df[c])
+        all_unique = n > 1 and not is_float and df[c].nunique(dropna=True) == n
         name_id = name in ("id", "index", "uuid") or name.endswith("_id") or name.startswith("id_")
         if all_unique or name_id:
             out.append((str(c), "all values unique" if all_unique else "name suggests an identifier"))
