@@ -177,12 +177,16 @@ def _eval_segmentation(df, profile, target) -> list[Finding]:
             f"{len(numeric)} numeric and {len(categorical)} categorical feature(s) available."))
 
     if len(numeric) >= 2:
-        ranges = {c: float(df[c].max() - df[c].min()) for c in numeric}
-        nonzero = [r for r in ranges.values() if r > 0]
-        if nonzero and max(nonzero) / min(nonzero) > 100:
+        # Compare spread (std), not raw range: k-means distance is dominated by
+        # the highest-variance feature regardless of its min-max span. A feature
+        # centred at ~1000 swamps one at ~0-1 even if its own range looks modest.
+        stds = {c: float(df[c].std()) for c in numeric}
+        nonzero = [s for s in stds.values() if s > 0]
+        if nonzero and max(nonzero) / min(nonzero) > 15:
+            biggest = max(stds, key=stds.get)
             out.append(Finding("warning", "Features on very different scales",
-                "Distance-based clustering (k-means) is dominated by large-scale "
-                "features unless you standardize first.",
+                f"'{biggest}' varies far more than the others, so distance-based "
+                "clustering (k-means) will be dominated by it unless you standardize first.",
                 "Apply StandardScaler / MinMaxScaler before clustering."))
 
     if categorical:
