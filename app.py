@@ -12,6 +12,7 @@ import streamlit as st
 from loaders import SUPPORTED_EXTENSIONS, load_dataframe
 from profiler import profile, render
 from rules import TASKS, classify_goal, evaluate_fitness, render_fitness
+from llm import generate_code
 
 st.set_page_config(page_title="Dataset Fitness Check", layout="wide")
 
@@ -99,7 +100,44 @@ else:
 
 st.code(render_fitness(result), language="text")
 
+# --------------------------------------------------------------------------- #
+# Layer 3: LLM-written preprocessing code (optional enhancement, never required)
+# --------------------------------------------------------------------------- #
+st.subheader("Get tailored preprocessing code")
 st.caption(
-    "Next version: turn these findings into ready-to-run preprocessing code, "
-    "tailored to your columns."
+    "Turns the findings above into runnable code for your exact columns. "
+    "Only the column names and findings are sent to the model — never your data."
 )
+
+# Gate the API call behind a button so it fires only on click (protects the
+# free rate limit), and key the cached result to the current inputs.
+gen_key = (upload.name, task_id, str(target), goal_text)
+if st.button("Generate preprocessing code"):
+    with st.spinner("Writing preprocessing code..."):
+        text, status = generate_code(
+            goal_text, TASKS[task_id].label, target,
+            [(c, str(df[c].dtype)) for c in df.columns],
+            result["findings"],
+        )
+    st.session_state["llm_result"] = {"key": gen_key, "text": text, "status": status}
+
+cached = st.session_state.get("llm_result")
+if cached and cached["key"] == gen_key:
+    status = cached["status"]
+    if status == "ok":
+        st.markdown(cached["text"])
+    elif status == "no_key":
+        st.info(
+            "No Groq key is configured, so the deterministic report above is the full "
+            "output. (To enable AI-written code, add a GROQ_API_KEY in the app secrets.)"
+        )
+    elif status == "rate_limited":
+        st.warning(
+            "The free AI tier is at its limit right now — the report above still covers "
+            "everything that needs fixing. Try the code generator again later."
+        )
+    else:
+        st.warning(
+            "Couldn't reach the AI service just now; the deterministic report above is "
+            "unaffected."
+        )
