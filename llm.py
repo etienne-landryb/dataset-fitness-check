@@ -19,7 +19,29 @@ from __future__ import annotations
 import os
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-GROQ_MODEL = "llama-3.3-70b-versatile"   # strong free-tier open model for code
+
+# llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16; every
+# call to it now fails and the app falls back to the deterministic report.
+GROQ_MODEL = "openai/gpt-oss-120b"   # current default: strong free-tier open model for code
+
+# Documented alternate if gpt-oss-120b has issues (quality, availability, rate
+# limits): swap GROQ_MODEL above to this string. No other code changes needed
+# -- REASONING_EFFORT_BY_MODEL below carries the per-model reasoning setting
+# so the swap actually behaves correctly (see next comment).
+GROQ_MODEL_FALLBACK = "qwen/qwen3.6-27b"
+
+# Both models are reasoning models that spend part of `max_tokens` on hidden
+# reasoning before writing visible content -- confirmed by testing, at the
+# default reasoning setting a model can burn the *entire* budget on reasoning
+# and return empty content (finish_reason "length"). Each model also uses
+# different valid values for `reasoning_effort` (gpt-oss: low/medium/high,
+# qwen: none/default), so the value can't be hardcoded once for both. This
+# map picks the lowest-reasoning setting per model, keeping the visible code
+# block from being crowded out.
+REASONING_EFFORT_BY_MODEL = {
+    "openai/gpt-oss-120b": "low",
+    "qwen/qwen3.6-27b": "none",
+}
 
 SYSTEM_PROMPT = """You are a data-preprocessing assistant embedded in a tool that has ALREADY analysed a dataset.
 You are given: the user's goal, the dataframe's columns with dtypes, and a list of concrete findings about the data.
@@ -76,6 +98,15 @@ def generate_code(goal, task_label, target, columns_info, findings, timeout=30):
     try:
         from openai import OpenAI  # Groq is OpenAI-API compatible
         client = OpenAI(api_key=key, base_url=GROQ_BASE_URL, timeout=timeout)
+        # Reasoning models can emit reasoning/think content; keep it out of
+        # the response entirely so `message.content` is always clean text.
+        # Neither field is on the openai SDK's typed signature -> both go via
+        # extra_body into the JSON request body.
+        extra_body = {"include_reasoning": False}
+        effort = REASONING_EFFORT_BY_MODEL.get(GROQ_MODEL)
+        if effort is not None:
+            extra_body["reasoning_effort"] = effort
+
         resp = client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[
@@ -85,6 +116,7 @@ def generate_code(goal, task_label, target, columns_info, findings, timeout=30):
             ],
             temperature=0.2,   # low -> stable, deterministic-ish code
             max_tokens=900,
+            extra_body=extra_body,
         )
         return resp.choices[0].message.content, "ok"
     except Exception as e:  # noqa: BLE001 -- classify then fall back
